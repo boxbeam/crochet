@@ -8,6 +8,8 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{RangeBounds, RangeInclusive};
 
+pub mod flatten;
+
 #[derive(Clone, Debug)]
 pub struct TextPosition {
     pub line: usize,
@@ -45,16 +47,16 @@ pub fn err<T, E: From<ParserError>>(error_type: ParserErrorType, slice: &str) ->
     .into())
 }
 
-pub trait Parser<'a, T: 'a, E: From<ParserError>>:
-    FnMut(&'a str) -> ParserResult<'a, T, E> + Sized
-{
-    fn parse(&mut self, input: &'a str) -> ParserResult<'a, T, E>;
+pub trait Parser<'a, T: 'a, E: From<ParserError>> {
+    type Context;
+
+    fn parse(&mut self, ctx: &mut Self::Context, input: &'a str) -> ParserResult<'a, T, E>;
 
     fn repeating(
         mut self,
         bounds: impl RangeBounds<usize> + Debug + Clone + 'static,
     ) -> impl Parser<'a, Vec<T>, E> {
-        move |s| {
+        move |ctx, s| {
             let mut out = vec![];
             let mut count = 0;
             let mut slice = s;
@@ -153,12 +155,26 @@ pub trait Parser<'a, T: 'a, E: From<ParserError>>:
     fn or_same(mut self, mut other: impl Parser<'a, T, E>) -> impl Parser<'a, T, E> {
         move |c| self.parse(c).or_else(|_| other.parse(c))
     }
+
+    fn wrapped(self, prefix: &'static str, suffix: &'static str) -> impl Parser<'a, T, E> {
+        literal(prefix)
+            .then(self)
+            .then(literal(suffix))
+            .map(|((_, e), _)| e)
+    }
 }
 
-impl<'a, T: 'a, E: From<ParserError>, F: FnMut(&'a str) -> ParserResult<'a, T, E>> Parser<'a, T, E>
-    for F
+impl<
+        'a,
+        T: 'a,
+        E: From<ParserError>,
+        C,
+        F: FnMut(&'a mut C, &'a str) -> ParserResult<'a, T, E>,
+    > Parser<'a, T, E> for F
 {
-    fn parse(&mut self, input: &'a str) -> ParserResult<'a, T, E> {
+    type Context = C;
+
+    fn parse(&mut self, ctx: &'a mut C, input: &'a str) -> ParserResult<'a, T, E> {
         self(input)
     }
 }
@@ -172,6 +188,24 @@ pub fn literal<'a, E: From<ParserError>>(
         } else {
             err(ParserErrorType::ExpectedString(string_literal), s)
         }
+    }
+}
+
+pub trait Unzip<'a, A: 'a, B: 'a, E: From<ParserError>>: Parser<'a, (A, B), E> {
+    fn drop_left(self) -> impl Parser<'a, B, E>;
+    fn drop_right(self) -> impl Parser<'a, A, E>;
+}
+
+impl<'a, P, A: 'a, B: 'a, E: From<ParserError>> Unzip<'a, A, B, E> for P
+where
+    P: Parser<'a, (A, B), E>,
+{
+    fn drop_left(self) -> impl Parser<'a, B, E> {
+        self.map(|(_, b)| b)
+    }
+
+    fn drop_right(self) -> impl Parser<'a, A, E> {
+        self.map(|(a, _)| a)
     }
 }
 
@@ -201,7 +235,30 @@ pub fn char_range<'a, E: From<ParserError>>(
     char_match(token_name, move |c| range.contains(&c))
 }
 
-// pub fn take_while<E: From<ParserError>>(f: impl Fn(char) -> bool) -> impl Parser<&str, >
+pub fn take_while<'a, E: From<ParserError>>(
+    token_name: &'static str,
+    f: impl Fn(char) -> bool,
+) -> impl Parser<'a, &'a str, E> {
+    char_match(token_name, f).sequence(1..)
+}
+
+pub fn delimited_list<'a, A: 'a, B: 'a, E: From<ParserError>>(
+    mut elem: impl Parser<'a, A, E>,
+    mut delim: impl Parser<'a, B, E>,
+) -> impl Parser<'a, Vec<A>, E> {
+    move |mut s| {
+        let mut tokens = vec![];
+        while let Ok((e, new_slice)) = elem.parse(s) {
+            tokens.push(e);
+            s = new_slice;
+            match delim.parse(s) {
+                Ok((_, new_slice)) => s = new_slice,
+                Err(_) => break,
+            }
+        }
+        Ok((tokens, s))
+    }
+}
 
 #[macro_export]
 macro_rules! first_matching {
@@ -212,6 +269,16 @@ macro_rules! first_matching {
         $first.or_same($crate::first_matching!($($rest),+))
     };
 }
+
+// #[macro_export]
+// macro_rules! all_of {
+//     ($last:expr) => {
+//         $last
+//     };
+//     ($first:expr, $($rest:expr),+) => {
+//         $first.then(all_of!($($rest),+)).map(flatten::Flatten::flatten)
+//     };
+// }
 
 pub enum Either<A, B> {
     A(A),
