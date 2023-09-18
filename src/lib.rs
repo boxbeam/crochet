@@ -46,7 +46,7 @@ pub fn err<T, E: From<ParserError>>(error_type: ParserErrorType, slice: &str) ->
 }
 
 macro_rules! all_of {
-    ($($parser:expr),+) => {
+    ($($parser:ident),+) => {
         move |mut s| {
             Ok((
                 ($(
@@ -169,7 +169,9 @@ pub trait Parser<'a, T: 'a, E: From<ParserError>>: Sized {
     }
 
     fn wrapped(mut self, prefix: &'static str, suffix: &'static str) -> impl Parser<'a, T, E> {
-        all_of!(literal(prefix), self, literal(suffix)).map(|(_, e, _)| e)
+        let mut prefix = literal(prefix);
+        let mut suffix = literal(suffix);
+        all_of!(prefix, self, suffix).map(|(_, e, _)| e)
     }
 }
 
