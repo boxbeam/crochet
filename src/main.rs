@@ -1,10 +1,10 @@
-#![feature(lazy_cell, closure_lifetime_binder)]
-use std::cell::{LazyCell, OnceCell, RefCell};
+#![feature(lazy_cell, closure_lifetime_binder, type_alias_impl_trait)]
+#![allow(dead_code)]
 
 use crochet::*;
 
 fn main() {
-    let num = "-0";
+    // let num = "-0";
     // println!("{}", int_parser()(num).unwrap().0);
 }
 
@@ -20,36 +20,29 @@ impl Default for Expr {
     }
 }
 
-// fn op_parser<'a>() -> impl Parser<'a, (), char, ParserError> {
-//     char_match("operator", |c| "+-/*^".contains(c))
-// }
+fn op_parser<'a>() -> impl Parser<'a, (), char, ParserError> {
+    char_match("operator", |c| "+-/*^".contains(c))
+}
 
-// fn term_parser<'a>() -> impl Parser<'a, (), Expr, ParserError> {
-//     literal("-")
-//         .then(expr_parser().boxed())
-//         .map(|(_, e)| Expr::Unary('-', e.into()))
-//         .or(expr_parser().wrapped("(", ")"))
-//         .or(int_literal_parser().map(Expr::Literal))
-// }
+fn term_parser<'a>() -> impl Parser<'a, (), Expr, ParserError> {
+    literal("-")
+        .then(expr_parser().boxed())
+        .map(|(_, e)| Expr::Unary('-', e.into()))
+        .or(expr_parser().wrapped("(", ")"))
+        .or(int_literal_parser().map(Expr::Literal))
+}
 
-// fn int_literal_parser<'a>() -> impl Parser<'a, (), i64, ParserError> {
-//     literal("-")
-//         .optional()
-//         .then(char_range("digit", '0'..='9').sequence(1..=10))
-//         .slice()
-//         .map(|s| s.parse().unwrap())
-// }
+fn int_literal_parser<'a>() -> impl Parser<'a, (), i64, ParserError> {
+    literal("-")
+        .optional()
+        .then(char_range("digit", '0'..='9').sequence(1..=10))
+        .slice()
+        .map(|s| s.parse().unwrap())
+}
 
-// fn expr_parser<'a>() -> impl Parser<'a, (), Expr, ParserError> {
-//     delimited_list(expr_parser().boxed(), op_parser()).map(|mut v| {
-//         let (head, rest) = v.split_at_mut(1);
-//         let (mut expr, mut op) = std::mem::take(&mut head[0]);
-//         for (next_elem, next_op) in rest {
-//             expr = Expr::Binary(expr.into(), op.unwrap(), std::mem::take(next_elem).into());
-//             if let Some(next_op) = next_op {
-//                 op.replace(*next_op);
-//             }
-//         }
-//         expr
-//     })
-// }
+fn expr_parser<'a>() -> impl Parser<'a, (), Expr, ParserError> {
+    term_parser()
+        .boxed()
+        .delimited_by(op_parser())
+        .map(|v| v.fold(|a, op, b| Expr::Binary(a.into(), op, b.into())))
+}
