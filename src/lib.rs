@@ -1,37 +1,30 @@
-#![feature(
-    lazy_cell,
-    return_position_impl_trait_in_trait,
-    try_trait_v2,
-    const_trait_impl,
-    impl_trait_in_assoc_type
-)]
-
-pub mod delimited_list;
+#![feature(try_trait_v2)]
 
 use std::{
-    cell::LazyCell,
     convert::Infallible,
-    ops::{Bound, ControlFlow, FromResidual, RangeBounds, RangeInclusive, Try},
+    ops::{Bound, ControlFlow, FromResidual, RangeBounds, Try},
 };
 
-use delimited_list::DelimitedList;
+use error::ParserError;
+
+pub mod error;
+
+#[macro_export]
+macro_rules! curry {
+    ($p:expr, $($arg:expr),+) => {
+        |s| $p($($arg),+, s)
+    }
+}
 
 pub struct ParserResult<'a, T, E> {
-    pub slice: &'a str,
+    pub source: &'a str,
     pub typ: ParserResultType<T, E>,
 }
 
-impl<'a, T, E> FromResidual for ParserResult<'a, T, E> {
-    fn from_residual(residual: <Self as Try>::Residual) -> Self {
-        Self {
-            slice: residual.slice,
-            typ: match residual.typ {
-                ParserResultType::Ok(_) => unreachable!(),
-                ParserResultType::Incomplete => ParserResultType::Incomplete,
-                ParserResultType::Failure(e) => ParserResultType::Failure(e),
-            },
-        }
-    }
+pub enum ParserResultType<T, E> {
+    Ok(T),
+    Err(E),
+    Incomplete,
 }
 
 impl<'a, T, E> Try for ParserResult<'a, T, E> {
@@ -39,375 +32,264 @@ impl<'a, T, E> Try for ParserResult<'a, T, E> {
 
     type Residual = ParserResult<'a, Infallible, E>;
 
-    fn from_output((slice, val): Self::Output) -> Self {
-        ParserResult {
-            slice,
-            typ: ParserResultType::Ok(val),
-        }
+    fn from_output(output: Self::Output) -> Self {
+        Self::from_val(output.0, output.1)
     }
 
-    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+    fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
         match self.typ {
-            ParserResultType::Ok(t) => ControlFlow::Continue((self.slice, t)),
-            _ => ControlFlow::Break(self.map(|_| unreachable!())),
+            ParserResultType::Ok(v) => ControlFlow::Continue((self.source, v)),
+            ParserResultType::Err(e) => ControlFlow::Break(ParserResult::from_err(self.source, e)),
+            ParserResultType::Incomplete => {
+                ControlFlow::Break(ParserResult::incomplete(self.source))
+            }
         }
     }
 }
 
-#[macro_export]
-macro_rules! tuple_parser {
-    ($($parser:ident),+) => {
-        move |ctx: &'_ mut _, mut slice| {
-            let outputs = ($(
-                    {
-                        let (new_slice, res) = $crate::Parser::parse(&$parser, ctx, slice)?;
-                        slice = new_slice;
-                        res
-                    }
-                ),+);
-            $crate::ParserResult::ok(slice, outputs)
+impl<'a, T, E, F: From<E>> FromResidual<ParserResult<'a, Infallible, E>>
+    for ParserResult<'a, T, F>
+{
+    fn from_residual(residual: ParserResult<'a, Infallible, E>) -> Self {
+        Self {
+            source: residual.source,
+            typ: match residual.typ {
+                ParserResultType::Ok(_) => unreachable!(),
+                ParserResultType::Err(e) => ParserResultType::Err(e.into()),
+                ParserResultType::Incomplete => ParserResultType::Incomplete,
+            },
         }
+    }
+}
+
+impl<T, E> ParserResultType<T, E> {
+    pub fn as_ref(&self) -> ParserResultType<&T, &E> {
+        match self {
+            ParserResultType::Ok(v) => ParserResultType::Ok(&v),
+            ParserResultType::Err(e) => ParserResultType::Err(&e),
+            ParserResultType::Incomplete => ParserResultType::Incomplete,
+        }
+    }
+
+    pub fn map<V>(self, f: impl FnOnce(T) -> V) -> ParserResultType<V, E> {
+        match self {
+            ParserResultType::Ok(t) => ParserResultType::Ok(f(t)),
+            ParserResultType::Incomplete => ParserResultType::Incomplete,
+            ParserResultType::Err(e) => ParserResultType::Err(e),
+        }
+    }
+
+    pub fn map_err<E2>(self, f: impl FnOnce(E) -> E2) -> ParserResultType<T, E2> {
+        match self {
+            ParserResultType::Ok(v) => ParserResultType::Ok(v),
+            ParserResultType::Err(e) => ParserResultType::Err(f(e)),
+            ParserResultType::Incomplete => ParserResultType::Incomplete,
+        }
+    }
+}
+
+pub trait Identity {
+    type I;
+
+    fn ident(self) -> Self::I;
+}
+impl<T> Identity for T {
+    type I = T;
+
+    fn ident(self) -> T {
+        self
     }
 }
 
 impl<'a, T, E> ParserResult<'a, T, E> {
-    pub fn ok(slice: &'a str, val: T) -> Self {
-        ParserResult {
-            slice,
+    pub fn from_val(source: &'a str, val: T) -> Self {
+        Self {
+            source,
             typ: ParserResultType::Ok(val),
         }
     }
 
-    pub fn err(slice: &'a str, err: E) -> Self {
-        ParserResult {
-            slice,
-            typ: ParserResultType::Failure(err),
+    pub fn from_err(source: &'a str, err: E) -> Self {
+        Self {
+            source,
+            typ: ParserResultType::Err(err),
         }
     }
 
-    pub fn into_option(self) -> Option<(&'a str, T)> {
-        if let ParserResultType::Ok(t) = self.typ {
-            Some((self.slice, t))
-        } else {
-            None
-        }
-    }
-
-    pub fn incomplete(slice: &'a str) -> Self {
-        ParserResult {
-            slice,
+    pub fn incomplete(source: &'a str) -> Self {
+        Self {
+            source,
             typ: ParserResultType::Incomplete,
         }
     }
 
-    pub fn map<V>(self, f: impl Fn(T) -> V) -> ParserResult<'a, V, E> {
+    pub fn is_incomplete(&self) -> bool {
+        matches!(self.typ, ParserResultType::Incomplete)
+    }
+
+    pub fn is_err(&self) -> bool {
+        matches!(self.typ, ParserResultType::Err(_))
+    }
+
+    pub fn is_ok(&self) -> bool {
+        matches!(self.typ, ParserResultType::Ok(_))
+    }
+
+    pub fn as_ref(&self) -> ParserResult<'a, &T, &E> {
         ParserResult {
-            slice: self.slice,
-            typ: match self.typ {
-                ParserResultType::Ok(t) => ParserResultType::Ok(f(t)),
-                ParserResultType::Failure(e) => ParserResultType::Failure(e),
-                ParserResultType::Incomplete => ParserResultType::Incomplete,
-            },
+            source: self.source,
+            typ: self.typ.as_ref(),
         }
     }
 
-    pub fn or_else(self, f: impl FnOnce() -> Self) -> Self {
+    pub fn ok(self) -> Option<T> {
         match self.typ {
-            ParserResultType::Ok(_) => self,
-            _ => f(),
+            ParserResultType::Ok(v) => Some(v),
+            _ => None,
         }
     }
 
-    pub fn and_then<V>(
+    pub fn err(self) -> Option<E> {
+        match self.typ {
+            ParserResultType::Err(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn optional(self, start: &'a str) -> ParserResult<'a, Option<T>, E> {
+        let position = match self.typ {
+            ParserResultType::Ok(_) => self.source,
+            _ => start,
+        };
+        ParserResult::from_val(position, self.ok())
+    }
+
+    pub fn map<V>(self, f: impl FnOnce(T) -> V) -> ParserResult<'a, V, E> {
+        ParserResult {
+            source: self.source,
+            typ: self.typ.map(f),
+        }
+    }
+
+    pub fn map_err<E2>(self, f: impl FnOnce(E) -> E2) -> ParserResult<'a, T, E2> {
+        ParserResult {
+            source: self.source,
+            typ: self.typ.map_err(f),
+        }
+    }
+
+    pub fn or_from(self, from: &'a str, p: impl Parser<'a, T, E>) -> Self {
+        if self.is_ok() {
+            self
+        } else {
+            p(from)
+        }
+    }
+
+    pub fn and<V>(self, p: impl Parser<'a, V, E>) -> ParserResult<'a, (T, V), E> {
+        let (s, e1) = self?;
+        let (s, e2) = p(s)?;
+        ParserResult::from_val(s, (e1, e2))
+    }
+
+    pub fn flat_map<V>(
         self,
-        f: impl FnOnce(T) -> ParserResult<'a, V, E>,
+        p: impl FnOnce(T, &'a str) -> ParserResult<'a, V, E>,
+    ) -> ParserResult<'a, V, E> {
+        let (s, val) = self?;
+        p(val, s)
+    }
+
+    pub fn flatten<V>(self) -> ParserResult<'a, V, E>
+    where
+        T: Identity<I = ParserResult<'a, V, E>>,
+    {
+        let (_, res) = self?;
+        let res: ParserResult<'a, V, E> = res.ident();
+        res
+    }
+
+    pub fn parsed_slice(&self, original: &'a str) -> &'a str {
+        &original[..original.len() - self.source.len()]
+    }
+
+    pub fn map_slice<V>(
+        self,
+        original: &'a str,
+        f: impl FnOnce(&'a str) -> V,
     ) -> ParserResult<'a, V, E> {
         ParserResult {
-            slice: self.slice,
+            source: self.source,
             typ: match self.typ {
-                ParserResultType::Ok(t) => return f(t),
-                ParserResultType::Incomplete => ParserResultType::Incomplete,
-                ParserResultType::Failure(e) => ParserResultType::Failure(e),
+                ParserResultType::Ok(_) => ParserResultType::Ok(f(self.parsed_slice(original))),
+                _ => self.typ.map(|_| unreachable!()),
             },
         }
     }
 }
 
-pub enum ParserResultType<T, E> {
-    Ok(T),
-    Incomplete,
-    Failure(E),
-}
-
-pub enum ParserError {
-    ExpectedLiteral(&'static str),
-    ExpectedToken(&'static str),
-}
-
-fn is_under(num: usize, end_bound: Bound<usize>) -> bool {
-    match end_bound {
-        Bound::Included(n) => num <= n,
-        Bound::Excluded(n) => num < n,
+fn is_under(num: usize, bound: Bound<&usize>) -> bool {
+    match bound {
+        Bound::Included(bound) => num <= *bound,
+        Bound::Excluded(bound) => num < *bound,
         Bound::Unbounded => true,
     }
 }
 
-pub type BoxedParser<'a, C, T, E> = Box<dyn Parser<'a, C, T, E> + 'a>;
-
-impl<'a, C, T: 'a, E> Parser<'a, C, T, E> for BoxedParser<'a, C, T, E> {
-    fn parse(&self, ctx: &mut C, input: &'a str) -> ParserResult<'a, T, E> {
-        self.as_ref().parse(ctx, input)
+pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
+    fn parse_repeating(
+        &self,
+        mut input: &'a str,
+        bounds: impl RangeBounds<usize>,
+    ) -> ParserResult<'a, Vec<T>, E> {
+        let mut elems = vec![];
+        let mut err = None;
+        while is_under(elems.len(), bounds.end_bound()) {
+            let parsed = self(input);
+            if let ParserResultType::Ok(v) = parsed.typ {
+                elems.push(v);
+                input = parsed.source;
+            } else {
+                err = Some(parsed);
+                break;
+            }
+        }
+        if bounds.contains(&elems.len()) {
+            err.expect("error must be present if not enough matches were found")
+                .map(|_| unreachable!())
+        } else {
+            ParserResult::from_val(input, elems)
+        }
     }
 }
 
-pub trait Parser<'a, C, T: 'a, E> {
-    fn parse(&self, ctx: &mut C, input: &'a str) -> ParserResult<'a, T, E>;
+impl<'a, T, E, F> Parser<'a, T, E> for F where F: Fn(&'a str) -> ParserResult<'a, T, E> {}
 
-    fn boxed(self) -> BoxedParser<'a, C, T, E>
-    where
-        Self: Sized + 'a,
-    {
-        Box::from(self)
-    }
-
-    fn slice(self) -> impl Parser<'a, C, &'a str, E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| {
-            let (new_slice, _) = self.parse(c, s)?;
-            let consumed = &s[..s.len() - new_slice.len()];
-            ParserResult::ok(s, consumed)
-        }
-    }
-
-    fn wrapped(self, prefix: &'static str, suffix: &'static str) -> impl Parser<'a, C, T, E>
-    where
-        Self: Sized,
-        E: From<ParserError>,
-    {
-        let prefix = literal(prefix).coerce_ctx();
-        let suffix = literal(suffix).coerce_ctx();
-        tuple_parser!(prefix, self, suffix).map(|(_, e, _)| e)
-    }
-
-    fn repeating(self, bounds: impl RangeBounds<usize>) -> impl Parser<'a, C, Vec<T>, E>
-    where
-        Self: Sized,
-        E: From<ParserError>,
-    {
-        move |c: &mut C, mut s| {
-            let mut count = 0;
-            let mut elems = vec![];
-            let mut err = None;
-            while is_under(count, bounds.end_bound().cloned()) {
-                let parsed = self.parse(c, s);
-                if let ParserResultType::Ok(e) = parsed.typ {
-                    elems.push(e);
-                } else {
-                    err = Some(parsed);
-                    break;
-                }
-                s = parsed.slice;
-                count += 1;
-            }
-            if !bounds.contains(&count) {
-                err.expect("error is present when not enough matches are found")
-                    .map(|_| unreachable!("error will never have an ok value"))
-            } else {
-                ParserResult::ok(s, elems)
-            }
-        }
-    }
-
-    fn sequence(self, bounds: impl RangeBounds<usize>) -> impl Parser<'a, C, &'a str, E>
-    where
-        Self: Sized,
-        E: From<ParserError>,
-    {
-        move |c: &mut C, s| {
-            let mut count = 0;
-            let mut new_slice = s;
-            let mut err = None;
-            while is_under(count, bounds.end_bound().cloned()) {
-                let parsed = self.parse(c, s);
-                if let ParserResultType::Ok(_) = parsed.typ {
-                    new_slice = parsed.slice;
-                } else {
-                    err = Some(parsed);
-                    break;
-                }
-                count += 1;
-            }
-            if !bounds.contains(&count) {
-                err.expect("error is present when not enough matches are found")
-                    .map(|_| unreachable!("error will never have an ok value"))
-            } else {
-                ParserResult::ok(s, &s[..s.len() - new_slice.len()])
-            }
-        }
-    }
-
-    fn delimited_by<D: 'a>(
-        self,
-        delim: impl Parser<'a, C, D, E>,
-    ) -> impl Parser<'a, C, DelimitedList<T, D>, E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| {
-            let (mut s, head) = self.parse(c, s)?;
-            let mut list = DelimitedList::from(head);
-            while let Some((new_slice, parsed_delim)) = delim.parse(c, s).into_option() {
-                let (new_slice, elem) = self.parse(c, new_slice)?;
-                list.push(parsed_delim, elem);
-                s = new_slice;
-            }
-            ParserResult::ok(s, list)
-        }
-    }
-
-    fn map<V: 'a>(self, f: impl Fn(T) -> V + 'a) -> impl Parser<'a, C, V, E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| self.parse(c, s).map(&f)
-    }
-
-    fn discard(self) -> impl Parser<'a, C, (), E>
-    where
-        Self: Sized,
-    {
-        self.map(|_| ())
-    }
-
-    fn coerce_ctx<Ctx>(self) -> impl Parser<'a, Ctx, T, E>
-    where
-        Self: Parser<'a, (), T, E> + Sized,
-    {
-        move |_: &mut Ctx, s| self.parse(&mut (), s)
-    }
-
-    fn or(self, other: impl Parser<'a, C, T, E>) -> impl Parser<'a, C, T, E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| self.parse(c, s).or_else(|| other.parse(c, s))
-    }
-
-    fn or_with<P: Parser<'a, C, T, E>>(self, other: impl FnOnce() -> P) -> impl Parser<'a, C, T, E>
-    where
-        Self: Sized,
-    {
-        let lazy = LazyCell::new(other);
-        move |c: &mut C, s| self.parse(c, s).or_else(|| lazy.parse(c, s))
-    }
-
-    fn optional(self) -> impl Parser<'a, C, Option<T>, E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| {
-            let parsed = self.parse(c, s);
-            if let ParserResultType::Ok(e) = parsed.typ {
-                ParserResult::ok(parsed.slice, Some(e))
-            } else {
-                ParserResult::ok(parsed.slice, None)
-            }
-        }
-    }
-
-    fn then<V: 'a>(self, next: impl Parser<'a, C, V, E>) -> impl Parser<'a, C, (T, V), E>
-    where
-        Self: Sized,
-    {
-        move |c: &mut C, s| {
-            let (s, a) = self.parse(c, s)?;
-            let (s, b) = next.parse(c, s)?;
-            ParserResult::ok(s, (a, b))
-        }
-    }
-
-    fn then_with<V: 'a, P: Parser<'a, C, V, E>>(
-        self,
-        other: impl FnOnce() -> P,
-    ) -> impl Parser<'a, C, (T, V), E>
-    where
-        Self: Sized,
-    {
-        let lazy = LazyCell::new(other);
-        move |c: &mut C, s| {
-            let (s, a) = self.parse(c, s)?;
-            let (s, b) = lazy.parse(c, s)?;
-            ParserResult::ok(s, (a, b))
-        }
-    }
-
-    fn drop_left<A: 'a, B: 'a>(self) -> impl Parser<'a, C, B, E>
-    where
-        Self: Parser<'a, C, (A, B), E> + Sized,
-    {
-        self.map(|(_, b)| b)
-    }
-
-    fn drop_right<A: 'a, B: 'a>(self) -> impl Parser<'a, C, A, E>
-    where
-        Self: Parser<'a, C, (A, B), E> + Sized,
-    {
-        self.map(|(a, _)| a)
-    }
+pub const fn repeating<'a, T, E>(
+    p: impl Parser<'a, T, E>,
+    bounds: impl RangeBounds<usize> + Clone,
+) -> impl Parser<'a, Vec<T>, E> {
+    move |s| p.parse_repeating(s, bounds.clone())
 }
 
-impl<'a, F, C, T: 'a, E> const Parser<'a, C, T, E> for F
-where
-    F: Fn(&mut C, &'a str) -> ParserResult<'a, T, E>,
-{
-    fn parse(&self, ctx: &mut C, input: &'a str) -> ParserResult<'a, T, E>
-    where
-        T: 'a,
-    {
-        self(ctx, input)
-    }
-}
-
-pub const fn literal<'a, E: From<ParserError>>(
+pub fn parse_literal<'a>(
     literal: &'static str,
-) -> impl Parser<'a, (), &'a str, E> {
-    move |_: &mut (), s: &'a str| {
-        if s.starts_with(literal) {
-            ParserResult::ok(s, &s[literal.len()..])
-        } else {
-            ParserResult::err(s, ParserError::ExpectedLiteral(literal).into())
-        }
+    input: &'a str,
+) -> ParserResult<'a, &'a str, ParserError> {
+    if input.starts_with(literal) {
+        ParserResult::from_val(input, &input[..literal.len()])
+    } else {
+        ParserResult::from_err(input, ParserError::ExpectedLiteral(literal))
     }
 }
 
-pub const fn char_match<'a, E: From<ParserError>>(
+pub fn parse_matching_char<'a>(
     token_name: &'static str,
-    pred: impl Fn(char) -> bool,
-) -> impl Parser<'a, (), char, E> {
-    move |_: &mut (), s: &'a str| {
-        let Some(c) = s.chars().next() else {
-            return ParserResult::err(s, ParserError::ExpectedToken(token_name).into());
-        };
-        if pred(c) {
-            ParserResult::ok(&s[c.len_utf8()..], c)
-        } else {
-            ParserResult::err(s, ParserError::ExpectedToken(token_name).into())
-        }
+    filter: impl Fn(char) -> bool,
+    input: &'a str,
+) -> ParserResult<'a, char, ParserError> {
+    match input.chars().next() {
+        Some(c) if filter(c) => ParserResult::from_val(&input[c.len_utf8()..], c),
+        _ => ParserResult::from_err(input, ParserError::ExpectedToken(token_name)),
     }
-}
-
-pub fn char_range<'a, E: From<ParserError>>(
-    token_name: &'static str,
-    range: RangeInclusive<char>,
-) -> impl Parser<'a, (), char, E> {
-    char_match(token_name, move |c| range.contains(&c))
-}
-
-pub fn take_while<'a, E: From<ParserError>>(
-    token_name: &'static str,
-    pred: impl Fn(char) -> bool,
-) -> impl Parser<'a, (), &'a str, E> {
-    char_match(token_name, pred).sequence(..)
 }
