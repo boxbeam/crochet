@@ -21,6 +21,16 @@ pub struct ParserResult<'a, T, E> {
     pub typ: ParserResultType<T, E>,
 }
 
+impl<'a, T, E> ParserResult<'a, T, E> {
+    pub fn unwrap(self) -> T {
+        if let ParserResultType::Ok(t) = self.typ {
+            t
+        } else {
+            panic!("unwrap called on erroneous or incomplete parser result")
+        }
+    }
+}
+
 pub enum ParserResultType<T, E> {
     Ok(T),
     Err(E),
@@ -254,7 +264,7 @@ pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
                 break;
             }
         }
-        if bounds.contains(&elems.len()) {
+        if !bounds.contains(&elems.len()) {
             err.expect("error must be present if not enough matches were found")
                 .map(|_| unreachable!())
         } else {
@@ -277,7 +287,8 @@ pub fn parse_literal<'a>(
     input: &'a str,
 ) -> ParserResult<'a, &'a str, ParserError> {
     if input.starts_with(literal) {
-        ParserResult::from_val(input, &input[..literal.len()])
+        let (parsed, rest) = input.split_at(literal.len());
+        ParserResult::from_val(rest, parsed)
     } else {
         ParserResult::from_err(input, ParserError::ExpectedLiteral(literal))
     }

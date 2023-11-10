@@ -8,11 +8,13 @@
 
 // use crochet::*;
 
-use std::{error::Error, num::ParseIntError};
-
 use crochet::{error::ParserError, parse_literal, parse_matching_char, repeating, ParserResult};
 
-fn main() {}
+fn main() {
+    let s = "-5";
+    let n = parse_int(s).unwrap();
+    println!("{n}");
+}
 
 fn parse_int(input: &str) -> ParserResult<i32, ParserError> {
     parse_literal("-", input)
