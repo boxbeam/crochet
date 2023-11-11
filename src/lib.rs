@@ -5,8 +5,10 @@ use std::{
     ops::{Bound, ControlFlow, FromResidual, RangeBounds, Try},
 };
 
+use container::Container;
 use error::ParserError;
 
+pub mod container;
 pub mod error;
 
 #[macro_export]
@@ -75,8 +77,8 @@ impl<'a, T, E, F: From<E>> FromResidual<ParserResult<'a, Infallible, E>>
 impl<T, E> ParserResultType<T, E> {
     pub fn as_ref(&self) -> ParserResultType<&T, &E> {
         match self {
-            ParserResultType::Ok(v) => ParserResultType::Ok(&v),
-            ParserResultType::Err(e) => ParserResultType::Err(&e),
+            ParserResultType::Ok(v) => ParserResultType::Ok(v),
+            ParserResultType::Err(e) => ParserResultType::Err(e),
             ParserResultType::Incomplete => ParserResultType::Incomplete,
         }
     }
@@ -292,6 +294,39 @@ pub fn parse_literal<'a>(
     } else {
         ParserResult::from_err(input, ParserError::ExpectedLiteral(literal))
     }
+}
+
+pub fn parse_delimited_list<
+    'a,
+    Elem,
+    Delim,
+    Error,
+    ElemContainer: Container<Elem>,
+    DelimContainer: Container<Delim>,
+>(
+    elem_parser: impl Parser<'a, Elem, Error>,
+    delim_parser: impl Parser<'a, Delim, Error>,
+    input: &'a str,
+) -> ParserResult<'a, (ElemContainer, DelimContainer), Error> {
+    let mut elems = ElemContainer::default();
+    let mut delims = DelimContainer::default();
+
+    let (mut input, first) = elem_parser(input)?;
+    elems.add(first);
+
+    loop {
+        let delim = delim_parser(input);
+        if !delim.is_ok() {
+            break;
+        }
+        input = delim.source;
+        delims.add(delim.unwrap());
+        let (new_slice, elem) = elem_parser(input)?;
+        input = new_slice;
+        elems.add(elem);
+    }
+
+    ParserResult::from_val(input, (elems, delims))
 }
 
 pub fn parse_matching_char<'a>(
