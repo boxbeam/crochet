@@ -8,21 +8,20 @@
 
 // use crochet::*;
 
-use crochet::{error::ParserError, parse_literal, parse_matching_char, repeating, ParserResult};
+use crochet::{
+    cur, delimited_list, error::ParserError, literal, matching_char, Parser, ParserResult,
+};
 
 fn main() {
-    let s = "-5";
-    let n = parse_int(s).unwrap();
-    println!("{n}");
+    let s = "-5,-3";
+    let (nums, _): (Vec<_>, ()) = delimited_list(parse_int, cur!(literal <= ","), s).unwrap();
+    println!("{nums:?}");
 }
 
 fn parse_int(input: &str) -> ParserResult<i32, ParserError> {
-    parse_literal("-", input)
+    literal("-", input)
         .optional(input)
-        .and(repeating(
-            |s| parse_matching_char("digit", |c| c.is_ascii_digit(), s),
-            1..,
-        ))
+        .and(cur!(matching_char <= "digit", |c| c.is_ascii_digit()).repeating(1..))
         .map_slice(input, |s| s.parse::<i32>().unwrap())
 }
 

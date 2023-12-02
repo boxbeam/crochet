@@ -1,4 +1,4 @@
-#![feature(try_trait_v2)]
+#![feature(try_trait_v2, slice_index_methods, impl_trait_in_assoc_type)]
 
 use std::{
     convert::Infallible,
@@ -7,13 +7,15 @@ use std::{
 
 use container::Container;
 use error::ParserError;
+use iter::{ParsIter, ParsingIterator};
 
 pub mod container;
 pub mod error;
+pub mod iter;
 
 #[macro_export]
-macro_rules! curry {
-    ($p:expr, $($arg:expr),+) => {
+macro_rules! cur {
+    ($p:ident <= $($arg:expr),+) => {
         |s| $p($($arg),+, s)
     }
 }
@@ -273,18 +275,20 @@ pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
             ParserResult::from_val(input, elems)
         }
     }
+
+    fn map<V>(&self, f: impl Fn(T) -> V) -> impl Parser<'a, V, E> {
+        move |s| self(s).map(&f)
+    }
+
+    fn repeating(&self, bounds: impl RangeBounds<usize> + Clone) -> impl Parser<'a, Vec<T>, E> {
+        move |s| self.parse_repeating(s, bounds.clone())
+    }
 }
 
 impl<'a, T, E, F> Parser<'a, T, E> for F where F: Fn(&'a str) -> ParserResult<'a, T, E> {}
 
-pub const fn repeating<'a, T, E>(
-    p: impl Parser<'a, T, E>,
-    bounds: impl RangeBounds<usize> + Clone,
-) -> impl Parser<'a, Vec<T>, E> {
-    move |s| p.parse_repeating(s, bounds.clone())
-}
-
-pub fn parse_literal<'a>(
+/// Parse a literal string token
+pub fn literal<'a>(
     literal: &'static str,
     input: &'a str,
 ) -> ParserResult<'a, &'a str, ParserError> {
@@ -296,7 +300,8 @@ pub fn parse_literal<'a>(
     }
 }
 
-pub fn parse_delimited_list<
+/// Parse a delimited list of elements using two parsers
+pub fn delimited_list<
     'a,
     Elem,
     Delim,
@@ -329,7 +334,8 @@ pub fn parse_delimited_list<
     ParserResult::from_val(input, (elems, delims))
 }
 
-pub fn parse_matching_char<'a>(
+/// Parse a single character matching a predicate
+pub fn matching_char<'a>(
     token_name: &'static str,
     filter: impl Fn(char) -> bool,
     input: &'a str,
@@ -337,5 +343,62 @@ pub fn parse_matching_char<'a>(
     match input.chars().next() {
         Some(c) if filter(c) => ParserResult::from_val(&input[c.len_utf8()..], c),
         _ => ParserResult::from_err(input, ParserError::ExpectedToken(token_name)),
+    }
+}
+
+/// Consume characters as long as they match a predicate
+pub fn take_while<'a>(
+    token_name: &'static str,
+    filter: impl Fn(char) -> bool,
+    input: &'a str,
+) -> ParserResult<'a, &'a str, ParserError> {
+    let len: usize = input
+        .chars()
+        .take_while(|c| filter(*c))
+        .map(|c| c.len_utf8())
+        .sum();
+    if len == 0 {
+        ParserResult::from_err(input, ParserError::ExpectedToken(token_name))
+    } else {
+        let (parsed, rest) = input.split_at(len);
+        ParserResult::from_val(rest, parsed)
+    }
+}
+
+/// Parse whitespace
+pub fn whitespace(input: &str) -> ParserResult<&str, ParserError> {
+    take_while("whitespace", char::is_whitespace, input)
+}
+
+/// Parse any number of elements, but at least one
+pub fn repeating<'a, T, E>(
+    parser: impl Parser<'a, T, E>,
+    source: &'a str,
+) -> ParserResult<'a, Vec<T>, E> {
+    let mut container = vec![];
+    let (mut slice, first) = parser(source)?;
+    container.add(first);
+    loop {
+        let res = parser(slice);
+        let new_slice = res.source;
+        let Some(elem) = res.ok() else {
+            break;
+        };
+        container.push(elem);
+        slice = new_slice;
+    }
+    ParserResult::from_val(slice, container)
+}
+
+/// Create a [ParsingIterator] from a parser and source slice
+pub fn iter<'a, T, E, P: Parser<'a, T, E>>(
+    parser: P,
+    source: &'a str,
+) -> impl ParsingIterator<'a, T, E, P> {
+    ParsIter {
+        phantom: Default::default(),
+        source,
+        parser,
+        err: false,
     }
 }
