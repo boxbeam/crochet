@@ -2,25 +2,25 @@ use std::marker::PhantomData;
 
 use crate::{Parser, ParserResult};
 
-pub(crate) struct ParsIter<'a, T, E, P>
+pub(crate) struct ParsIter<'a, 'b, T, E, P>
 where
     P: Parser<'a, T, E>,
 {
     pub(crate) phantom: PhantomData<(T, E)>,
-    pub(crate) source: &'a str,
+    pub(crate) source: &'b mut &'a str,
     pub(crate) parser: P,
     pub(crate) err: bool,
 }
 
-impl<'a, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, T, E, P> {
+impl<'a, 'b, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, 'b, T, E, P> {
     type Item = ParserResult<'a, T, E>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.err {
             return None;
         }
-        let res = (self.parser)(self.source);
-        self.source = res.source;
+        let res = self.parser.parse(*self.source);
+        *self.source = res.source;
         if res.is_err() {
             self.err = true;
         }
@@ -28,11 +28,11 @@ impl<'a, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, T, E, P> {
     }
 }
 
-pub trait ParsingIterator<'a, T, E, P: Parser<'a, T, E>>:
+pub trait ParsingIterator<'a, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a>:
     Iterator<Item = ParserResult<'a, T, E>>
 {
     /// Create a [ParsingIterator] from a parser and source
-    fn new(parser: P, source: &'a str) -> impl ParsingIterator<'a, T, E, P> {
+    fn new(parser: P, source: &'a mut &'a str) -> impl ParsingIterator<'a, T, E, P> {
         crate::iter(parser, source)
     }
 
@@ -56,6 +56,7 @@ pub trait ParsingIterator<'a, T, E, P: Parser<'a, T, E>>:
         ParserResult::from_val(source, collection)
     }
 
+    /// Map the element type of the [ParserResult]
     fn map_inner<V>(
         self,
         mut f: impl FnMut(T) -> V + 'a,
@@ -67,7 +68,7 @@ pub trait ParsingIterator<'a, T, E, P: Parser<'a, T, E>>:
     }
 }
 
-impl<'a, T, E, P: Parser<'a, T, E>, I> ParsingIterator<'a, T, E, P> for I where
+impl<'a, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a, I> ParsingIterator<'a, T, E, P> for I where
     I: Iterator<Item = ParserResult<'a, T, E>>
 {
 }

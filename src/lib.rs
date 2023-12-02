@@ -12,6 +12,8 @@ use iter::{ParsIter, ParsingIterator};
 pub mod container;
 pub mod error;
 pub mod iter;
+mod json;
+pub mod parsers;
 
 #[macro_export]
 macro_rules! cur {
@@ -192,17 +194,17 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
-    pub fn or_from(self, from: &'a str, p: impl Parser<'a, T, E>) -> Self {
+    pub fn or(self, from: &'a str, p: impl Parser<'a, T, E>) -> Self {
         if self.is_ok() {
             self
         } else {
-            p(from)
+            p.parse(from)
         }
     }
 
     pub fn and<V>(self, p: impl Parser<'a, V, E>) -> ParserResult<'a, (T, V), E> {
         let (s, e1) = self?;
-        let (s, e2) = p(s)?;
+        let (s, e2) = p.parse(s)?;
         ParserResult::from_val(s, (e1, e2))
     }
 
@@ -250,7 +252,9 @@ fn is_under(num: usize, bound: Bound<&usize>) -> bool {
     }
 }
 
-pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
+pub trait Parser<'a, T, E> {
+    fn parse(&self, input: &'a str) -> ParserResult<'a, T, E>;
+
     fn parse_repeating(
         &self,
         mut input: &'a str,
@@ -259,7 +263,7 @@ pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
         let mut elems = vec![];
         let mut err = None;
         while is_under(elems.len(), bounds.end_bound()) {
-            let parsed = self(input);
+            let parsed = self.parse(input);
             if let ParserResultType::Ok(v) = parsed.typ {
                 elems.push(v);
                 input = parsed.source;
@@ -277,7 +281,7 @@ pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
     }
 
     fn map<V>(&self, f: impl Fn(T) -> V) -> impl Parser<'a, V, E> {
-        move |s| self(s).map(&f)
+        move |s| self.parse(s).map(&f)
     }
 
     fn repeating(&self, bounds: impl RangeBounds<usize> + Clone) -> impl Parser<'a, Vec<T>, E> {
@@ -285,7 +289,14 @@ pub trait Parser<'a, T, E>: Fn(&'a str) -> ParserResult<'a, T, E> {
     }
 }
 
-impl<'a, T, E, F> Parser<'a, T, E> for F where F: Fn(&'a str) -> ParserResult<'a, T, E> {}
+impl<'a, T, E, F> Parser<'a, T, E> for F
+where
+    F: Fn(&'a str) -> ParserResult<'a, T, E>,
+{
+    fn parse(&self, input: &'a str) -> ParserResult<'a, T, E> {
+        self(input)
+    }
+}
 
 /// Parse a literal string token
 pub fn literal<'a>(
@@ -316,17 +327,17 @@ pub fn delimited_list<
     let mut elems = ElemContainer::default();
     let mut delims = DelimContainer::default();
 
-    let (mut input, first) = elem_parser(input)?;
+    let (mut input, first) = elem_parser.parse(input)?;
     elems.add(first);
 
     loop {
-        let delim = delim_parser(input);
+        let delim = delim_parser.parse(input);
         if !delim.is_ok() {
             break;
         }
         input = delim.source;
         delims.add(delim.unwrap());
-        let (new_slice, elem) = elem_parser(input)?;
+        let (new_slice, elem) = elem_parser.parse(input)?;
         input = new_slice;
         elems.add(elem);
     }
@@ -376,10 +387,10 @@ pub fn repeating<'a, T, E>(
     source: &'a str,
 ) -> ParserResult<'a, Vec<T>, E> {
     let mut container = vec![];
-    let (mut slice, first) = parser(source)?;
+    let (mut slice, first) = parser.parse(source)?;
     container.add(first);
     loop {
-        let res = parser(slice);
+        let res = parser.parse(slice);
         let new_slice = res.source;
         let Some(elem) = res.ok() else {
             break;
@@ -391,14 +402,30 @@ pub fn repeating<'a, T, E>(
 }
 
 /// Create a [ParsingIterator] from a parser and source slice
-pub fn iter<'a, T, E, P: Parser<'a, T, E>>(
+pub fn iter<'a, 'b, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a>(
     parser: P,
-    source: &'a str,
-) -> impl ParsingIterator<'a, T, E, P> {
+    source: &'b mut &'a str,
+) -> impl ParsingIterator<'a, T, E, P> + 'b {
     ParsIter {
         phantom: Default::default(),
         source,
         parser,
         err: false,
+    }
+}
+
+/// Check a single character of the input without consuming it
+pub fn peek(input: &str) -> ParserResult<char, ParserError> {
+    match input.chars().next() {
+        Some(c) => ParserResult::from_val(input, c),
+        None => ParserResult::from_err(input, ParserError::UnexpectedEndOfFile),
+    }
+}
+
+/// Consume a single character from the input
+pub fn advance(input: &str) -> ParserResult<char, ParserError> {
+    match input.chars().next() {
+        Some(c) => ParserResult::from_val(&input[c.len_utf8()..], c),
+        None => ParserResult::from_err(input, ParserError::UnexpectedEndOfFile),
     }
 }

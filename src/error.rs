@@ -4,6 +4,7 @@ use std::{error::Error, fmt::Display};
 pub enum ParserError {
     ExpectedLiteral(&'static str),
     ExpectedToken(&'static str),
+    UnexpectedEndOfFile,
 }
 
 impl Display for ParserError {
@@ -11,6 +12,7 @@ impl Display for ParserError {
         match self {
             ParserError::ExpectedLiteral(s) => write!(f, "Expected literal: '{s}'"),
             ParserError::ExpectedToken(s) => write!(f, "Expected {s}"),
+            ParserError::UnexpectedEndOfFile => write!(f, "Unexpected end of file"),
         }
     }
 }
