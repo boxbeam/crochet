@@ -12,6 +12,19 @@ where
     pub(crate) err: bool,
 }
 
+pub(crate) struct ParsIterDelim<'a, 'b, Elem, Delim, Error, PElem, PDelim>
+where
+    PElem: Parser<'a, Elem, Error>,
+    PDelim: Parser<'a, Delim, Error>,
+{
+    pub(crate) phantom: PhantomData<(Elem, Delim, Error)>,
+    pub(crate) source: &'b mut &'a str,
+    pub(crate) elem_parser: PElem,
+    pub(crate) delim_parser: PDelim,
+    pub(crate) err: bool,
+    pub(crate) first: bool,
+}
+
 impl<'a, 'b, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, 'b, T, E, P> {
     type Item = ParserResult<'a, T, E>;
 
@@ -19,7 +32,7 @@ impl<'a, 'b, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, 'b, T, E, P> {
         if self.err {
             return None;
         }
-        let res = self.parser.parse(*self.source);
+        let res = self.parser.parse(self.source);
         *self.source = res.source;
         if res.is_err() {
             self.err = true;
@@ -28,11 +41,41 @@ impl<'a, 'b, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, 'b, T, E, P> {
     }
 }
 
-pub trait ParsingIterator<'a, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a>:
-    Iterator<Item = ParserResult<'a, T, E>>
+impl<'a, 'b, Elem, Delim, Error, PElem, PDelim> Iterator
+    for ParsIterDelim<'a, 'b, Elem, Delim, Error, PElem, PDelim>
+where
+    PElem: Parser<'a, Elem, Error>,
+    PDelim: Parser<'a, Delim, Error>,
 {
+    type Item = ParserResult<'a, Elem, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.err {
+            return None;
+        }
+        let res = if self.first {
+            self.first = false;
+            self.elem_parser.parse(self.source)
+        } else {
+            self.delim_parser
+                .parse(self.source)
+                .and(|s| self.elem_parser.parse(s))
+                .map(|(_, elem)| elem)
+        };
+        *self.source = res.source;
+        if res.is_err() {
+            self.err = true;
+        }
+        Some(res)
+    }
+}
+
+pub trait ParsingIterator<'a, T: 'a, E: 'a>: Iterator<Item = ParserResult<'a, T, E>> {
     /// Create a [ParsingIterator] from a parser and source
-    fn new(parser: P, source: &'a mut &'a str) -> impl ParsingIterator<'a, T, E, P> {
+    fn new<'b>(
+        parser: impl Parser<'a, T, E> + 'b,
+        source: &'b mut &'a str,
+    ) -> impl ParsingIterator<'a, T, E> {
         crate::iter(parser, source)
     }
 
@@ -68,7 +111,7 @@ pub trait ParsingIterator<'a, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a>:
     }
 }
 
-impl<'a, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a, I> ParsingIterator<'a, T, E, P> for I where
+impl<'a, T: 'a, E: 'a, I> ParsingIterator<'a, T, E> for I where
     I: Iterator<Item = ParserResult<'a, T, E>>
 {
 }

@@ -7,7 +7,7 @@ use std::{
 
 use container::Container;
 use error::ParserError;
-use iter::{ParsIter, ParsingIterator};
+use iter::{ParsIter, ParsIterDelim, ParsingIterator};
 
 pub mod container;
 pub mod error;
@@ -402,15 +402,30 @@ pub fn repeating<'a, T, E>(
 }
 
 /// Create a [ParsingIterator] from a parser and source slice
-pub fn iter<'a, 'b, T: 'a, E: 'a, P: Parser<'a, T, E> + 'a>(
-    parser: P,
+pub fn iter<'a, 'b, T: 'a, E: 'a>(
+    parser: impl Parser<'a, T, E> + 'b,
     source: &'b mut &'a str,
-) -> impl ParsingIterator<'a, T, E, P> + 'b {
+) -> impl ParsingIterator<'a, T, E> + 'b {
     ParsIter {
         phantom: Default::default(),
         source,
         parser,
         err: false,
+    }
+}
+
+pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a>(
+    elem_parser: impl Parser<'a, Elem, Error> + 'b,
+    delim_parser: impl Parser<'a, Delim, Error> + 'b,
+    source: &'b mut &'a str,
+) -> impl ParsingIterator<'a, Elem, Error> + 'b {
+    ParsIterDelim {
+        phantom: Default::default(),
+        source,
+        elem_parser,
+        delim_parser,
+        err: false,
+        first: true,
     }
 }
 
