@@ -92,11 +92,11 @@ pub trait ParsingIterator<'a, T: 'a, E: 'a>: Iterator<Item = ParserResult<'a, T,
     where
         Self: Sized,
     {
-        let (source, first) = self
+        let (first, source) = self
             .next()
             .expect("parsing iterator must contain either an element or an error")?;
         let chain = std::iter::once(first).chain(self.ok());
-        ParserResult::from_val(source, chain)
+        ParserResult::from_val(chain, source)
     }
 
     /// Map the element type of the [ParserResult]

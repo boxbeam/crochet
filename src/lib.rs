@@ -44,7 +44,7 @@ pub enum ParserResultType<T, E> {
 }
 
 impl<'a, T, E> Try for ParserResult<'a, T, E> {
-    type Output = (&'a str, T);
+    type Output = (T, &'a str);
 
     type Residual = ParserResult<'a, Infallible, E>;
 
@@ -54,8 +54,8 @@ impl<'a, T, E> Try for ParserResult<'a, T, E> {
 
     fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
         match self.typ {
-            ParserResultType::Ok(v) => ControlFlow::Continue((self.source, v)),
-            ParserResultType::Err(e) => ControlFlow::Break(ParserResult::from_err(self.source, e)),
+            ParserResultType::Ok(v) => ControlFlow::Continue((v, self.source)),
+            ParserResultType::Err(e) => ControlFlow::Break(ParserResult::from_err(e, self.source)),
             ParserResultType::Incomplete => {
                 ControlFlow::Break(ParserResult::incomplete(self.source))
             }
@@ -118,14 +118,14 @@ impl<T> Identity for T {
 }
 
 impl<'a, T, E> ParserResult<'a, T, E> {
-    pub fn from_val(source: &'a str, val: T) -> Self {
+    pub fn from_val(val: T, source: &'a str) -> Self {
         Self {
             source,
             typ: ParserResultType::Ok(val),
         }
     }
 
-    pub fn from_err(source: &'a str, err: E) -> Self {
+    pub fn from_err(err: E, source: &'a str) -> Self {
         Self {
             source,
             typ: ParserResultType::Err(err),
@@ -177,7 +177,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
             ParserResultType::Ok(_) => self.source,
             _ => start,
         };
-        ParserResult::from_val(position, self.ok())
+        ParserResult::from_val(self.ok(), position)
     }
 
     pub fn map<V>(self, f: impl FnOnce(T) -> V) -> ParserResult<'a, V, E> {
@@ -203,16 +203,16 @@ impl<'a, T, E> ParserResult<'a, T, E> {
     }
 
     pub fn and<V>(self, p: impl Parser<'a, V, E>) -> ParserResult<'a, (T, V), E> {
-        let (s, e1) = self?;
-        let (s, e2) = p.parse(s)?;
-        ParserResult::from_val(s, (e1, e2))
+        let (e1, s) = self?;
+        let (e2, s) = p.parse(s)?;
+        ParserResult::from_val((e1, e2), s)
     }
 
     pub fn flat_map<V>(
         self,
         p: impl FnOnce(T, &'a str) -> ParserResult<'a, V, E>,
     ) -> ParserResult<'a, V, E> {
-        let (s, val) = self?;
+        let (val, s) = self?;
         p(val, s)
     }
 
@@ -220,7 +220,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
     where
         T: Identity<I = ParserResult<'a, V, E>>,
     {
-        let (_, res) = self?;
+        let (res, _) = self?;
         let res: ParserResult<'a, V, E> = res.ident();
         res
     }
@@ -295,9 +295,9 @@ pub fn literal<'a>(
 ) -> ParserResult<'a, &'a str, ParserError> {
     if input.starts_with(literal) {
         let (parsed, rest) = input.split_at(literal.len());
-        ParserResult::from_val(rest, parsed)
+        ParserResult::from_val(parsed, rest)
     } else {
-        ParserResult::from_err(input, ParserError::ExpectedLiteral(literal))
+        ParserResult::from_err(ParserError::ExpectedLiteral(literal), input)
     }
 }
 
@@ -317,7 +317,7 @@ pub fn delimited_list<
     let mut elems = ElemContainer::default();
     let mut delims = DelimContainer::default();
 
-    let (mut input, first) = elem_parser.parse(input)?;
+    let (first, mut input) = elem_parser.parse(input)?;
     elems.add(first);
 
     loop {
@@ -327,12 +327,12 @@ pub fn delimited_list<
         }
         input = delim.source;
         delims.add(delim.unwrap());
-        let (new_slice, elem) = elem_parser.parse(input)?;
+        let (elem, new_slice) = elem_parser.parse(input)?;
         input = new_slice;
         elems.add(elem);
     }
 
-    ParserResult::from_val(input, (elems, delims))
+    ParserResult::from_val((elems, delims), input)
 }
 
 /// Parse a single character matching a predicate
@@ -342,8 +342,8 @@ pub fn matching_char<'a>(
     input: &'a str,
 ) -> ParserResult<'a, char, ParserError> {
     match input.chars().next() {
-        Some(c) if filter(c) => ParserResult::from_val(&input[c.len_utf8()..], c),
-        _ => ParserResult::from_err(input, ParserError::ExpectedToken(token_name)),
+        Some(c) if filter(c) => ParserResult::from_val(c, &input[c.len_utf8()..]),
+        _ => ParserResult::from_err(ParserError::ExpectedToken(token_name), input),
     }
 }
 
@@ -359,10 +359,10 @@ pub fn take_while<'a>(
         .map(|c| c.len_utf8())
         .sum();
     if len == 0 {
-        ParserResult::from_err(input, ParserError::ExpectedToken(token_name))
+        ParserResult::from_err(ParserError::ExpectedToken(token_name), input)
     } else {
         let (parsed, rest) = input.split_at(len);
-        ParserResult::from_val(rest, parsed)
+        ParserResult::from_val(parsed, rest)
     }
 }
 
@@ -397,7 +397,7 @@ pub fn repeating<'a, T, E>(
         err.expect("error must be present if not enough matches were found")
             .map(|_| unreachable!())
     } else {
-        ParserResult::from_val(source, elems)
+        ParserResult::from_val(elems, source)
     }
 }
 
@@ -432,15 +432,15 @@ pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a>(
 /// Check a single character of the input without consuming it
 pub fn peek(input: &str) -> ParserResult<char, ParserError> {
     match input.chars().next() {
-        Some(c) => ParserResult::from_val(input, c),
-        None => ParserResult::from_err(input, ParserError::UnexpectedEndOfFile),
+        Some(c) => ParserResult::from_val(c, input),
+        None => ParserResult::from_err(ParserError::UnexpectedEndOfFile, input),
     }
 }
 
 /// Consume a single character from the input
 pub fn advance(input: &str) -> ParserResult<char, ParserError> {
     match input.chars().next() {
-        Some(c) => ParserResult::from_val(&input[c.len_utf8()..], c),
-        None => ParserResult::from_err(input, ParserError::UnexpectedEndOfFile),
+        Some(c) => ParserResult::from_val(c, &input[c.len_utf8()..]),
+        None => ParserResult::from_err(ParserError::UnexpectedEndOfFile, input),
     }
 }

@@ -15,32 +15,32 @@ fn parse_num(input: &str) -> Result<f64> {
 }
 
 fn parse_num_list(mut input: &str) -> Result<Vec<f64>> {
-    let (s, iter) =
+    let (iter, s) =
         iter_delimited(parse_num, |s| literal(",", s).and(whitespace), &mut input).require()?;
-    ParserResult::from_val(s, iter.collect())
+    ParserResult::from_val(iter.collect(), s)
 }
 
 fn parse_str(s: &str) -> Result<String> {
-    let (mut s, _) = literal("\"", s)?;
+    let (_, mut s) = literal("\"", s)?;
     let string: String = iter(
         |s| parse_esc(s).or(|s| matching_char("char", |c| c != '"', s), s),
         &mut s,
     )
     .ok()
     .collect();
-    let (s, _) = literal("\"", s)?;
-    ParserResult::from_val(s, string)
+    let (_, s) = literal("\"", s)?;
+    ParserResult::from_val(string, s)
 }
 
 fn parse_esc(s: &str) -> Result<char> {
-    let (s, _) = literal("\\", s)?;
-    let (s, c) = advance(s)?;
+    let (_, s) = literal("\\", s)?;
+    let (c, s) = advance(s)?;
     ParserResult::from_val(
-        s,
         match c {
             'n' => '\n',
             't' => '\t',
             _ => c,
         },
+        s,
     )
 }
