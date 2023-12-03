@@ -88,15 +88,15 @@ pub trait ParsingIterator<'a, T: 'a, E: 'a>: Iterator<Item = ParserResult<'a, T,
     }
 
     /// Turn `self` into an iterator over only the successfully-parsed elements, requiring at least one
-    fn require<C: FromIterator<T>>(mut self) -> ParserResult<'a, impl Iterator<Item = T>, E>
+    fn require(mut self) -> ParserResult<'a, impl Iterator<Item = T>, E>
     where
         Self: Sized,
     {
         let (source, first) = self
             .next()
             .expect("parsing iterator must contain either an element or an error")?;
-        let collection = std::iter::once(first).chain(self.ok());
-        ParserResult::from_val(source, collection)
+        let chain = std::iter::once(first).chain(self.ok());
+        ParserResult::from_val(source, chain)
     }
 
     /// Map the element type of the [ParserResult]

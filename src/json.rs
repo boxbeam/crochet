@@ -14,10 +14,16 @@ fn parse_num(input: &str) -> Result<f64> {
         .map_slice(input, |s| s.parse().unwrap())
 }
 
+fn parse_num_list(mut input: &str) -> Result<Vec<f64>> {
+    let (s, iter) =
+        iter_delimited(parse_num, |s| literal(",", s).and(whitespace), &mut input).require()?;
+    ParserResult::from_val(s, iter.collect())
+}
+
 fn parse_str(s: &str) -> Result<String> {
     let (mut s, _) = literal("\"", s)?;
     let string: String = iter(
-        |s| parse_esc(s).or(s, |s| matching_char("char", |c| c != '"', s)),
+        |s| parse_esc(s).or(|s| matching_char("char", |c| c != '"', s), s),
         &mut s,
     )
     .ok()

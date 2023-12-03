@@ -194,7 +194,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
-    pub fn or(self, from: &'a str, p: impl Parser<'a, T, E>) -> Self {
+    pub fn or(self, p: impl Parser<'a, T, E>, from: &'a str) -> Self {
         if self.is_ok() {
             self
         } else {
@@ -255,37 +255,27 @@ fn is_under(num: usize, bound: Bound<&usize>) -> bool {
 pub trait Parser<'a, T, E> {
     fn parse(&self, input: &'a str) -> ParserResult<'a, T, E>;
 
-    fn parse_repeating(
-        &self,
-        mut input: &'a str,
-        bounds: impl RangeBounds<usize>,
-    ) -> ParserResult<'a, Vec<T>, E> {
-        let mut elems = vec![];
-        let mut err = None;
-        while is_under(elems.len(), bounds.end_bound()) {
-            let parsed = self.parse(input);
-            if let ParserResultType::Ok(v) = parsed.typ {
-                elems.push(v);
-                input = parsed.source;
-            } else {
-                err = Some(parsed);
-                break;
-            }
-        }
-        if !bounds.contains(&elems.len()) {
-            err.expect("error must be present if not enough matches were found")
-                .map(|_| unreachable!())
-        } else {
-            ParserResult::from_val(input, elems)
-        }
-    }
-
     fn map<V>(&self, f: impl Fn(T) -> V) -> impl Parser<'a, V, E> {
         move |s| self.parse(s).map(&f)
     }
 
-    fn repeating(&self, bounds: impl RangeBounds<usize> + Clone) -> impl Parser<'a, Vec<T>, E> {
-        move |s| self.parse_repeating(s, bounds.clone())
+    fn optional(&self) -> impl Parser<'a, Option<T>, E> {
+        |s| self.parse(s).optional(s)
+    }
+
+    fn and<V>(&self, other: impl Parser<'a, V, E>) -> impl Parser<'a, (T, V), E> {
+        move |s| self.parse(s).and(|s| other.parse(s))
+    }
+
+    fn or(&self, other: impl Parser<'a, T, E>) -> impl Parser<'a, T, E> {
+        move |s| self.parse(s).or(|s| other.parse(s), s)
+    }
+
+    fn repeating(
+        &self,
+        bounds: impl RangeBounds<usize> + Clone + 'a,
+    ) -> impl Parser<'a, Vec<T>, E> {
+        move |s| repeating(|s| self.parse(s), bounds.clone(), s)
     }
 }
 
@@ -381,24 +371,34 @@ pub fn whitespace(input: &str) -> ParserResult<&str, ParserError> {
     take_while("whitespace", char::is_whitespace, input)
 }
 
+pub fn opt_whitespace(input: &str) -> ParserResult<Option<&str>, ParserError> {
+    whitespace(input).optional(input)
+}
+
 /// Parse any number of elements, but at least one
 pub fn repeating<'a, T, E>(
     parser: impl Parser<'a, T, E>,
-    source: &'a str,
+    bounds: impl RangeBounds<usize> + 'a,
+    mut source: &'a str,
 ) -> ParserResult<'a, Vec<T>, E> {
-    let mut container = vec![];
-    let (mut slice, first) = parser.parse(source)?;
-    container.add(first);
-    loop {
-        let res = parser.parse(slice);
-        let new_slice = res.source;
-        let Some(elem) = res.ok() else {
+    let mut elems = vec![];
+    let mut err = None;
+    while is_under(elems.len(), bounds.end_bound()) {
+        let parsed = parser.parse(source);
+        if let ParserResultType::Ok(v) = parsed.typ {
+            elems.push(v);
+            source = parsed.source;
+        } else {
+            err = Some(parsed);
             break;
-        };
-        container.push(elem);
-        slice = new_slice;
+        }
     }
-    ParserResult::from_val(slice, container)
+    if !bounds.contains(&elems.len()) {
+        err.expect("error must be present if not enough matches were found")
+            .map(|_| unreachable!())
+    } else {
+        ParserResult::from_val(source, elems)
+    }
 }
 
 /// Create a [ParsingIterator] from a parser and source slice
