@@ -2,6 +2,7 @@
 
 use std::{
     convert::Infallible,
+    fmt::Debug,
     ops::{Bound, ControlFlow, FromResidual, RangeBounds, Try},
 };
 
@@ -25,6 +26,16 @@ macro_rules! cur {
 pub struct ParserResult<'a, T, E> {
     pub source: &'a str,
     pub typ: ParserResultType<T, E>,
+}
+
+impl<'a, T: Debug, E: Debug> Debug for ParserResult<'a, T, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.typ {
+            ParserResultType::Ok(v) => f.debug_tuple("Ok").field(v).finish(),
+            ParserResultType::Err(v) => f.debug_tuple("Err").field(v).finish(),
+            ParserResultType::Incomplete => write!(f, "Incomplete"),
+        }
+    }
 }
 
 impl<'a, T, E> ParserResult<'a, T, E> {
