@@ -1,4 +1,4 @@
-use std::num::ParseIntError;
+use std::{collections::HashMap, num::ParseIntError};
 
 use crate::*;
 
@@ -12,6 +12,7 @@ pub enum JSONValue {
     Integer(i64),
     Float(f64),
     List(Vec<JSONValue>),
+    Map(HashMap<String, JSONValue>),
 }
 
 #[derive(Debug)]
@@ -43,7 +44,7 @@ fn parse_num(s: &str) -> Result<JSONValue> {
     }
 }
 
-fn parse_str(s: &str) -> Result<JSONValue> {
+fn parse_str(s: &str) -> Result<String> {
     let (_, mut s) = literal("\"", s)?;
     let string: String = iter(
         |s| parse_esc(s).or(|s| matching_char("char", |c| c != '"', s), s),
@@ -52,7 +53,7 @@ fn parse_str(s: &str) -> Result<JSONValue> {
     .ok()
     .collect();
     let (_, s) = literal("\"", s)?;
-    ParserResult::from_val(JSONValue::String(string), s)
+    ParserResult::from_val(string, s)
 }
 
 fn parse_esc(s: &str) -> Result<char> {
@@ -90,14 +91,33 @@ fn parse_list(s: &str) -> Result<JSONValue> {
     ParserResult::from_val(JSONValue::List(list), s)
 }
 
+fn parse_map(s: &str) -> Result<JSONValue> {
+    let (_, mut s) = literal("{", s).and(opt_whitespace)?;
+    let map = iter_delimited(
+        |s| {
+            let (key, s) = parse_str(s)?;
+            let (_, s) = opt_whitespace(s).and(":").and(opt_whitespace)?;
+            let (value, s) = parse_value(s)?;
+            ParserResult::from_val((key, value), s)
+        },
+        ",".and(opt_whitespace).err_into::<JSONError>(),
+        &mut s,
+    )
+    .ok()
+    .collect();
+    let (_, s) = literal("}", s).and(opt_whitespace)?;
+    ParserResult::from_val(JSONValue::Map(map), s)
+}
+
 pub fn parse_value(s: &str) -> Result<JSONValue> {
     let (c, s) = peek(s)?;
     match c {
-        '"' => parse_str(s),
+        '"' => parse_str(s).map(JSONValue::String),
         '-' | '0'..='9' => parse_num(s),
         'n' => parse_null(s),
         't' | 'f' => parse_bool(s),
         '[' => parse_list(s),
+        '{' => parse_map(s),
         _ => ParserResult::from_err(JSONError::InvalidToken(c), s),
     }
 }

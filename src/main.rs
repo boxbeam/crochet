@@ -11,7 +11,7 @@
 use crochet::json::parse_value;
 
 fn main() {
-    let s = "[-1,2.0,true,[]]";
+    let s = r#"[-1,2.0,true,[], {"a": 1}]"#;
     let value = parse_value(s).unwrap();
     println!("{value:?}");
 }
