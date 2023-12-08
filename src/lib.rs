@@ -12,7 +12,7 @@ use iter::{ParsIter, ParsIterDelim, ParsingIterator};
 pub mod container;
 pub mod error;
 pub mod iter;
-mod json;
+pub mod json;
 pub mod parsers;
 
 #[macro_export]
@@ -194,11 +194,22 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
-    pub fn or(self, p: impl Parser<'a, T, E>, from: &'a str) -> Self {
+    pub fn err_into<E2>(self) -> ParserResult<'a, T, E2>
+    where
+        E: Into<E2>,
+    {
+        self.map_err(Into::into)
+    }
+
+    pub fn or<E2: Into<E>>(
+        self,
+        p: impl Parser<'a, T, E2>,
+        from: &'a str,
+    ) -> ParserResult<'a, T, E> {
         if self.is_ok() {
             self
         } else {
-            p.parse(from)
+            p.parse(from).err_into()
         }
     }
 
@@ -225,22 +236,24 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         res
     }
 
-    pub fn parsed_slice(&self, original: &'a str) -> &'a str {
+    /// Converts the [ParserResult] into a slice over the parsed value, if it was successful
+    pub fn parsed_slice(self, original: &'a str) -> ParserResult<'a, &'a str, E> {
+        let slice = self.slice(original);
+        self.map(|_| slice)
+    }
+
+    /// Gets the slice indicated by this [ParserResult], which may be either the parsed value or the erroneous input
+    pub fn slice(&self, original: &'a str) -> &'a str {
         &original[..original.len() - self.source.len()]
     }
 
+    /// Maps the parsed slice of this result
     pub fn map_slice<V>(
         self,
-        original: &'a str,
         f: impl FnOnce(&'a str) -> V,
+        original: &'a str,
     ) -> ParserResult<'a, V, E> {
-        ParserResult {
-            source: self.source,
-            typ: match self.typ {
-                ParserResultType::Ok(_) => ParserResultType::Ok(f(self.parsed_slice(original))),
-                _ => self.typ.map(|_| unreachable!()),
-            },
-        }
+        self.parsed_slice(original).map(f)
     }
 }
 
@@ -277,6 +290,13 @@ pub trait Parser<'a, T, E> {
     ) -> impl Parser<'a, Vec<T>, E> {
         move |s| repeating(|s| self.parse(s), bounds.clone(), s)
     }
+
+    fn err_into<E2>(&self) -> impl Parser<'a, T, E2>
+    where
+        E: Into<E2>,
+    {
+        move |s| self.parse(s).err_into()
+    }
 }
 
 impl<'a, T, E, F> Parser<'a, T, E> for F
@@ -288,14 +308,23 @@ where
     }
 }
 
+pub struct Literal(pub &'static str);
+
+impl From<&'static str> for Literal {
+    fn from(value: &'static str) -> Self {
+        Literal(value)
+    }
+}
+
 /// Parse a literal string token
 pub fn literal<'a>(
-    literal: &'static str,
+    literal: impl Into<Literal>,
     input: &'a str,
-) -> ParserResult<'a, &'a str, ParserError> {
+) -> ParserResult<'a, Literal, ParserError> {
+    let Literal(literal) = literal.into();
     if input.starts_with(literal) {
-        let (parsed, rest) = input.split_at(literal.len());
-        ParserResult::from_val(parsed, rest)
+        let (_parsed, rest) = input.split_at(literal.len());
+        ParserResult::from_val(Literal(literal), rest)
     } else {
         ParserResult::from_err(ParserError::ExpectedLiteral(literal), input)
     }

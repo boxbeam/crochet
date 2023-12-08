@@ -8,21 +8,12 @@
 
 // use crochet::*;
 
-use crochet::{
-    cur, delimited_list, error::ParserError, literal, matching_char, Parser, ParserResult,
-};
+use crochet::json::parse_value;
 
 fn main() {
-    let s = "-5,-3";
-    let (nums, _): (Vec<_>, ()) = delimited_list(parse_int, cur!(literal <= ","), s).unwrap();
-    println!("{nums:?}");
-}
-
-fn parse_int(input: &str) -> ParserResult<i32, ParserError> {
-    literal("-", input)
-        .optional(input)
-        .and(cur!(matching_char <= "digit", |c| c.is_ascii_digit()).repeating(1..))
-        .map_slice(input, |s| s.parse::<i32>().unwrap())
+    let s = "[-1,2.0,true,[]]";
+    let value = parse_value(s).unwrap();
+    println!("{value:?}");
 }
 
 // enum Expr {
