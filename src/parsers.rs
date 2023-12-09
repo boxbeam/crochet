@@ -6,6 +6,7 @@ impl<'a> Parser<'a, Literal, ParserError> for &'static str {
     }
 }
 
+/// Create a tuple parser which implicitly converts errors as needed
 #[macro_export]
 macro_rules! parser_tuple {
     ($($p:expr),+) => {
