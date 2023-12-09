@@ -19,6 +19,12 @@ pub mod parser;
 pub mod parser_result;
 pub mod parsers;
 
+/// Curry a parsing function that takes more than one argument to create a parser
+/// Example:
+/// ```
+/// use crochet::*;
+/// cur!(take_while <= "digit", |c| c.is_ascii_digit());
+/// ```
 #[macro_export]
 macro_rules! cur {
     ($p:ident <= $($arg:expr),+) => {
@@ -169,6 +175,7 @@ pub fn iter<'a, 'b, T: 'a, E: 'a>(
     }
 }
 
+/// Create a [ParsingIterator] that parses delimited lists of values from an element parser, delimiter parser, and source slice
 pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a, DelimError: Into<Error> + 'a>(
     elem_parser: impl Parser<'a, Elem, Error> + 'b,
     delim_parser: impl Parser<'a, Delim, DelimError> + 'b,
