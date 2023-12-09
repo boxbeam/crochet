@@ -24,6 +24,7 @@ macro_rules! cur {
     }
 }
 
+#[must_use]
 pub struct ParserResult<'a, T, E> {
     pub source: &'a str,
     pub typ: ParserResultType<T, E>,
@@ -227,7 +228,11 @@ impl<'a, T, E> ParserResult<'a, T, E> {
 
     pub fn and<V>(self, p: impl Parser<'a, V, E>) -> ParserResult<'a, (T, V), E> {
         let (e1, s) = self?;
-        let (e2, s) = p.parse(s)?;
+        let mut res2 = p.parse(s);
+        if !res2.is_ok() {
+            res2.source = s;
+        }
+        let (e2, s) = res2?;
         ParserResult::from_val((e1, e2), s)
     }
 
@@ -468,6 +473,16 @@ pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a>(
         err: false,
         first: true,
     }
+}
+
+/// Explicitly ignore the output of a parser, advancing the parsing head using a mutable reference
+pub fn ignore<'a, 'b, T, E>(
+    parser: impl Parser<'a, T, E>,
+    input: &'b mut &'a str,
+) -> ParserResult<'a, (), E> {
+    let res = parser.parse(input);
+    *input = res.source;
+    res.map(|_| ())
 }
 
 /// Check a single character of the input without consuming it

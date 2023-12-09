@@ -82,12 +82,19 @@ fn parse_null(s: &str) -> Result<JSONValue> {
     literal("null", s).map(|_| JSONValue::Null).err_into()
 }
 
-fn parse_list(s: &str) -> Result<JSONValue> {
-    let (_, mut s) = literal("[", s).and(opt_whitespace)?;
-    let list = iter_delimited(parse_value, ",".and(opt_whitespace).err_into(), &mut s)
-        .ok()
-        .collect();
-    let (_, s) = literal("]", s)?;
+fn parse_list(mut s: &str) -> Result<JSONValue> {
+    ignore("[".and(opt_whitespace), &mut s)?;
+
+    let list = iter_delimited(
+        parse_value.and(opt_whitespace.err_into()),
+        ",".and(opt_whitespace).err_into(),
+        &mut s,
+    )
+    .ok()
+    .map(|(v, _)| v)
+    .collect();
+
+    ignore(opt_whitespace.and("]"), &mut s)?;
     ParserResult::from_val(JSONValue::List(list), s)
 }
 

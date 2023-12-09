@@ -57,5 +57,3 @@ impl<'a> Cursor<'a> {
         c
     }
 }
-
-pub type Input<'a> = &'a mut Cursor<'a>;

@@ -33,8 +33,9 @@ impl<'a, 'b, T, E, P: Parser<'a, T, E>> Iterator for ParsIter<'a, 'b, T, E, P> {
             return None;
         }
         let res = self.parser.parse(self.source);
-        *self.source = res.source;
-        if res.is_err() {
+        if res.is_ok() {
+            *self.source = res.source;
+        } else {
             self.err = true;
         }
         Some(res)
