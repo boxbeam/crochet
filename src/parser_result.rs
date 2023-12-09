@@ -188,6 +188,11 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Replaces this result's value with a given value
+    pub fn is<V>(self, val: V) -> ParserResult<'a, V, E> {
+        self.map(|_| val)
+    }
+
     /// Maps this result's error to another type using a mapping function
     pub fn map_err<E2>(self, f: impl FnOnce(E) -> E2) -> ParserResult<'a, T, E2> {
         ParserResult {

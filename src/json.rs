@@ -70,16 +70,12 @@ fn parse_esc(s: &str) -> Result<char> {
 }
 
 fn parse_bool(s: &str) -> Result<JSONValue> {
-    "true"
-        .map(|_| true)
-        .or("false".map(|_| false))
-        .parse(s)
-        .map(JSONValue::Bool)
-        .err_into()
-}
-
-fn parse_null(s: &str) -> Result<JSONValue> {
-    literal("null", s).map(|_| JSONValue::Null).err_into()
+    match peek(s)?.0 {
+        't' => literal("true", s).is(true).err_into(),
+        'f' => literal("false", s).is(false).err_into(),
+        c => Result::from_err(JSONError::InvalidToken(c), s),
+    }
+    .map(JSONValue::Bool)
 }
 
 fn parse_list(mut s: &str) -> Result<JSONValue> {
@@ -122,7 +118,7 @@ pub fn parse_value(s: &str) -> Result<JSONValue> {
     match c {
         '"' => parse_str(s).map(JSONValue::String),
         '-' | '0'..='9' => parse_num(s),
-        'n' => parse_null(s),
+        'n' => literal("null", s).is(JSONValue::Null).err_into(),
         't' | 'f' => parse_bool(s),
         '[' => parse_list(s),
         '{' => parse_map(s),
