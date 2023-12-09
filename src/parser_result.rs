@@ -108,6 +108,7 @@ impl<T, E> ParserResultType<T, E> {
 }
 
 impl<'a, T, E> ParserResult<'a, T, E> {
+    /// Create a [ParserResult] from a value and source location to continue from
     pub fn from_val(val: T, source: &'a str) -> Self {
         Self {
             source,
@@ -115,6 +116,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Create a [ParserResult] from an error and source location where the error occurred
     pub fn from_err(err: E, source: &'a str) -> Self {
         Self {
             source,
@@ -122,6 +124,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Create an incomplete [ParserResult] from a source location where the parsing stopped
     pub fn incomplete(source: &'a str) -> Self {
         Self {
             source,
@@ -129,18 +132,22 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Returns whether this result is incomplete
     pub fn is_incomplete(&self) -> bool {
         matches!(self.typ, ParserResultType::Incomplete)
     }
 
+    /// Returns whether this result is an error
     pub fn is_err(&self) -> bool {
         matches!(self.typ, ParserResultType::Err(_))
     }
 
+    /// Returns whether this result succeeded
     pub fn is_ok(&self) -> bool {
         matches!(self.typ, ParserResultType::Ok(_))
     }
 
+    /// Create a new [ParserResult] borrowing the value or error wrapped by this one
     pub fn as_ref(&self) -> ParserResult<'a, &T, &E> {
         ParserResult {
             source: self.source,
@@ -148,6 +155,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Get an [Option] which is present only if the parsing succeeded
     pub fn ok(self) -> Option<T> {
         match self.typ {
             ParserResultType::Ok(v) => Some(v),
@@ -155,6 +163,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Get an [Option] which is present only if the parsing failed with an error
     pub fn err(self) -> Option<E> {
         match self.typ {
             ParserResultType::Err(e) => Some(e),
@@ -162,6 +171,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Force this result to be a success, resetting the position and using None if it was erroneous
     pub fn optional(self, start: &'a str) -> ParserResult<'a, Option<T>, E> {
         let position = match self.typ {
             ParserResultType::Ok(_) => self.source,
@@ -170,6 +180,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         ParserResult::from_val(self.ok(), position)
     }
 
+    /// Maps this result's value to another type using a mapping function
     pub fn map<V>(self, f: impl FnOnce(T) -> V) -> ParserResult<'a, V, E> {
         ParserResult {
             source: self.source,
@@ -177,6 +188,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Maps this result's error to another type using a mapping function
     pub fn map_err<E2>(self, f: impl FnOnce(E) -> E2) -> ParserResult<'a, T, E2> {
         ParserResult {
             source: self.source,
@@ -184,6 +196,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Implicitly convert the error type into another
     pub fn err_into<E2>(self) -> ParserResult<'a, T, E2>
     where
         E: Into<E2>,
@@ -191,6 +204,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         self.map_err(Into::into)
     }
 
+    /// Try another parser if this result failed, from the given position, and return whichever succeeded first, if any
     pub fn or<E2: Into<E>>(
         self,
         p: impl Parser<'a, T, E2>,
@@ -203,6 +217,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
+    /// Parse another value after this one if this one succeeded, and return it in a tuple
     pub fn and<V, E2: Into<E>>(self, p: impl Parser<'a, V, E2>) -> ParserResult<'a, (T, V), E> {
         let (e1, s) = self?;
         let mut res2 = p.parse(s);
@@ -213,10 +228,12 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         ParserResult::from_val((e1, e2), s)
     }
 
+    /// Parse another value after this one if this one succeeded, and discard the value
     pub fn and_ignore<V, E2: Into<E>>(self, p: impl Parser<'a, V, E2>) -> Self {
         self.and(p.err_into()).map(|(v, _)| v)
     }
 
+    /// Parse another value using the previously-parsed value if this one succeeded
     pub fn flat_map<V>(
         self,
         p: impl FnOnce(T, &'a str) -> ParserResult<'a, V, E>,
@@ -225,6 +242,7 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         p(val, s)
     }
 
+    /// Flatten this result if it contains another ParserResult
     pub fn flatten<V>(self) -> ParserResult<'a, V, E>
     where
         T: Identity<I = ParserResult<'a, V, E>>,
