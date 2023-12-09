@@ -11,7 +11,7 @@
 use crochet::json::parse_value;
 
 fn main() {
-    let s = r#"1."#;
+    let s = r#""Hello\"""#;
     let value = parse_value(s);
     println!("{value:?}");
 }

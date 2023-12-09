@@ -12,6 +12,7 @@ use iter::{ParsIter, ParsIterDelim, ParsingIterator};
 
 pub mod container;
 pub mod error;
+pub mod input;
 pub mod iter;
 pub mod json;
 pub mod parsers;
