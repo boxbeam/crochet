@@ -203,14 +203,18 @@ impl<'a, T, E> ParserResult<'a, T, E> {
         }
     }
 
-    pub fn and<V>(self, p: impl Parser<'a, V, E>) -> ParserResult<'a, (T, V), E> {
+    pub fn and<V, E2: Into<E>>(self, p: impl Parser<'a, V, E2>) -> ParserResult<'a, (T, V), E> {
         let (e1, s) = self?;
         let mut res2 = p.parse(s);
         if !res2.is_ok() {
             res2.source = s;
         }
-        let (e2, s) = res2?;
+        let (e2, s) = res2.err_into()?;
         ParserResult::from_val((e1, e2), s)
+    }
+
+    pub fn and_ignore<V, E2: Into<E>>(self, p: impl Parser<'a, V, E2>) -> Self {
+        self.and(p.err_into()).map(|(v, _)| v)
     }
 
     pub fn flat_map<V>(

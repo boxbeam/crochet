@@ -28,6 +28,13 @@ pub trait Parser<'a, T, E> {
         move |s| repeating(|s| self.parse(s), bounds.clone(), s)
     }
 
+    fn and_ignore<V, E2>(&self, p: impl Parser<'a, V, E2>) -> impl Parser<'a, T, E>
+    where
+        E2: Into<E>,
+    {
+        move |s| self.parse(s).and(p.err_into()).map(|(v, _)| v)
+    }
+
     fn err_into<E2>(&self) -> impl Parser<'a, T, E2>
     where
         E: Into<E2>,

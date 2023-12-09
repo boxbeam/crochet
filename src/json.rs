@@ -83,28 +83,28 @@ fn parse_null(s: &str) -> Result<JSONValue> {
 }
 
 fn parse_list(mut s: &str) -> Result<JSONValue> {
-    ignore("[".and(opt_whitespace), &mut s)?;
+    ignore(("[", opt_whitespace), &mut s)?;
 
     let list = iter_delimited(
-        parse_value.and(opt_whitespace.err_into()),
+        parse_value.and_ignore(opt_whitespace),
         ",".and(opt_whitespace).err_into(),
         &mut s,
     )
     .ok()
-    .map(|(v, _)| v)
     .collect();
 
     ignore(opt_whitespace.and("]"), &mut s)?;
     ParserResult::from_val(JSONValue::List(list), s)
 }
 
-fn parse_map(s: &str) -> Result<JSONValue> {
-    let (_, mut s) = literal("{", s).and(opt_whitespace)?;
+fn parse_map(mut s: &str) -> Result<JSONValue> {
+    ignore(("{", opt_whitespace), &mut s)?;
+
     let map = iter_delimited(
         |s| {
-            let (key, s) = parse_str(s)?;
-            let (_, s) = opt_whitespace(s).and(":").and(opt_whitespace)?;
-            let (value, s) = parse_value(s)?;
+            let (key, mut s) = parse_str(s).and_ignore(opt_whitespace)?;
+            ignore((opt_whitespace, ":", opt_whitespace), &mut s)?;
+            let (value, s) = parse_value(s).and_ignore(opt_whitespace)?;
             ParserResult::from_val((key, value), s)
         },
         ",".and(opt_whitespace).err_into::<JSONError>(),
@@ -112,7 +112,8 @@ fn parse_map(s: &str) -> Result<JSONValue> {
     )
     .ok()
     .collect();
-    let (_, s) = literal("}", s).and(opt_whitespace)?;
+
+    ignore("}", &mut s)?;
     ParserResult::from_val(JSONValue::Map(map), s)
 }
 

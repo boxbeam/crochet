@@ -9,7 +9,7 @@ use container::Container;
 use error::ParserError;
 use iter::{ParsIter, ParsIterDelim, ParsingIterator};
 pub use parser::Parser;
-use parser_result::{ParserResult, ParserResultType};
+pub use parser_result::{ParserResult, ParserResultType};
 
 pub mod container;
 pub mod error;
