@@ -87,7 +87,7 @@ fn parse_list(mut s: &str) -> Result<JSONValue> {
 
     let list = iter_delimited(
         parse_value.and_ignore(opt_whitespace),
-        ",".and(opt_whitespace).err_into(),
+        ",".and(opt_whitespace),
         &mut s,
     )
     .ok()
@@ -105,9 +105,9 @@ fn parse_map(mut s: &str) -> Result<JSONValue> {
             let (key, mut s) = parse_str(s).and_ignore(opt_whitespace)?;
             ignore((opt_whitespace, ":", opt_whitespace), &mut s)?;
             let (value, s) = parse_value(s).and_ignore(opt_whitespace)?;
-            ParserResult::from_val((key, value), s)
+            ParserResult::<'_, _, JSONError>::from_val((key, value), s)
         },
-        ",".and(opt_whitespace).err_into::<JSONError>(),
+        ",".and(opt_whitespace),
         &mut s,
     )
     .ok()

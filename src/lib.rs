@@ -169,16 +169,16 @@ pub fn iter<'a, 'b, T: 'a, E: 'a>(
     }
 }
 
-pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a>(
+pub fn iter_delimited<'a, 'b, Elem: 'a, Delim: 'a, Error: 'a, DelimError: Into<Error> + 'a>(
     elem_parser: impl Parser<'a, Elem, Error> + 'b,
-    delim_parser: impl Parser<'a, Delim, Error> + 'b,
+    delim_parser: impl Parser<'a, Delim, DelimError> + 'b,
     source: &'b mut &'a str,
 ) -> impl ParsingIterator<'a, Elem, Error> + 'b {
     ParsIterDelim {
         phantom: Default::default(),
         source,
         elem_parser,
-        delim_parser,
+        delim_parser: move |s| delim_parser.parse(s).err_into(),
         err: false,
         first: true,
     }
